@@ -16,7 +16,9 @@ control is disabled by default and is never part of the cooling loop.
 | Attribute | Meaning |
 |---|---|
 | `fan1_input`, `fan2_input` | Bay fan speeds in RPM. The second fan is exposed when `fan_count=2` (the default). |
+| `fan1_label`, `fan2_label` | `Bay Fan 1`, `Bay Fan 2`; the second label follows `fan_count`. |
 | `temp1_input` | Controller temperature in millidegrees Celsius. |
+| `temp1_label` | `Backplane`. |
 | `pwm1` | Last applied fan duty on the hwmon scale of 0–255. The default 80% is reported as 204. |
 | `pwm1_enable` | `0` when the driver holds its fallback duty; `1` after userspace sets a manual duty. |
 | `hdd_slots` | Number of HDD positions considered, capped at six. |
@@ -104,9 +106,14 @@ For a read-only inspection, load with
 `sudo modprobe zimacube_bay enable_fan_control=0 enable_disk_power=0`.
 This leaves fan duty untouched and exposes no slot power command.
 
-`make dkms` installs or updates version `0.3` from `dkms.conf`. `make install`
+`make dkms` installs or updates version `0.4` from `dkms.conf`. `make install`
 performs a plain module install without DKMS. `make dkms-purge` removes all
 versions of the current `zimacube-bay` package.
+
+When upgrading from `0.3`, DKMS can build and install `0.4` while `0.3` stays
+loaded. Stop the Python service and reload `zimacube_bay` to activate the new
+labels, then restart the service. Remove the old DKMS registration with
+`sudo dkms remove -m zimacube-bay -v 0.3 --all` before rebooting.
 
 ### Upgrading from `zimacube-bay-fan`
 
@@ -146,9 +153,11 @@ device and resumed manual fan control at 60% (`pwm1=153`, `pwm1_enable=1`).
 Slot power remained disabled: `enable_disk_power=N` and `slot_power` was absent.
 No slot power command has been sent or tested on hardware.
 
-Version `0.3` changes module and package naming. It has not yet been loaded on
-the Cube. The optional slot power command remains disabled by default and
-has not been exercised.
+Version `0.3` changed module and package naming and is running on the Cube
+with the updated Python daemon. Both fans report RPM and the disk-power
+interface remains disabled. No slot power command has been sent or tested.
+
+Version `0.4` adds only hwmon labels. It has not yet been loaded on the Cube.
 
 ## License
 

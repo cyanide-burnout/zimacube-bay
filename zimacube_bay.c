@@ -528,6 +528,27 @@ static int bay_read(struct device *dev, enum hwmon_sensor_types type, u32 attr,
   return result;
 }
 
+static int bay_read_string(struct device *dev, enum hwmon_sensor_types type,
+                           u32 attr, int channel, const char **str)
+{
+  static const char *const fan_labels[] = { "Bay Fan 1", "Bay Fan 2" };
+
+  if ((type == hwmon_fan) && (attr == hwmon_fan_label) &&
+      (channel >= 0) && (channel < (int)ARRAY_SIZE(fan_labels)))
+  {
+    *str = fan_labels[channel];
+    return 0;
+  }
+
+  if ((type == hwmon_temp) && (attr == hwmon_temp_label) && (channel == 0))
+  {
+    *str = "Backplane";
+    return 0;
+  }
+
+  return -EOPNOTSUPP;
+}
+
 static int bay_write(struct device *dev, enum hwmon_sensor_types type, u32 attr,
                      int channel, long val)
 {
@@ -609,8 +630,10 @@ static int bay_write(struct device *dev, enum hwmon_sensor_types type, u32 attr,
 }
 
 static const struct hwmon_channel_info *const bay_info[] = {
-  HWMON_CHANNEL_INFO(fan, HWMON_F_INPUT, HWMON_F_INPUT),
-  HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT),
+  HWMON_CHANNEL_INFO(fan,
+                     HWMON_F_INPUT | HWMON_F_LABEL,
+                     HWMON_F_INPUT | HWMON_F_LABEL),
+  HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT | HWMON_T_LABEL),
   HWMON_CHANNEL_INFO(pwm, HWMON_PWM_INPUT | HWMON_PWM_ENABLE),
   NULL
 };
@@ -618,6 +641,7 @@ static const struct hwmon_channel_info *const bay_info[] = {
 static const struct hwmon_ops bay_hwmon_ops = {
   .is_visible = bay_is_visible,
   .read = bay_read,
+  .read_string = bay_read_string,
   .write = bay_write,
 };
 
