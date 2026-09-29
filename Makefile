@@ -1,6 +1,6 @@
-obj-m += zimacube_bay_fan.o
+obj-m += zimacube_bay.o
 
-NAME    := zimacube-bay-fan
+NAME    := zimacube-bay
 VERSION := $(shell sed -n 's/^PACKAGE_VERSION="\(.*\)"/\1/p' dkms.conf)
 SRCDIR  := /usr/src/$(NAME)-$(VERSION)
 
@@ -20,7 +20,7 @@ install: all
 	$(MAKE) -C $(KDIR) M=$(PWD) modules_install
 	depmod -a
 	@echo
-	@echo "Now: modprobe zimacube_bay_fan (on a matching ZimaCube Pro)"
+	@echo "Now: modprobe zimacube_bay (on a matching ZimaCube Pro)"
 
 # --- dkms -----------------------------------------------------------------
 
@@ -29,7 +29,7 @@ check-version:
 
 # install or update; safe to re-run after editing the source
 dkms: check-version
-	install -D -m 0644 zimacube_bay_fan.c $(SRCDIR)/zimacube_bay_fan.c
+	install -D -m 0644 zimacube_bay.c $(SRCDIR)/zimacube_bay.c
 	install -D -m 0644 Makefile           $(SRCDIR)/Makefile
 	install -D -m 0644 dkms.conf          $(SRCDIR)/dkms.conf
 	@dkms status -m $(NAME) -v $(VERSION) | grep -q . || dkms add -m $(NAME) -v $(VERSION)
@@ -38,7 +38,7 @@ dkms: check-version
 	dkms build   -m $(NAME) -v $(VERSION) --force
 	dkms install -m $(NAME) -v $(VERSION) --force
 	@echo
-	@echo "Then: modprobe zimacube_bay_fan (on a matching ZimaCube Pro)"
+	@echo "Then: modprobe zimacube_bay (on a matching ZimaCube Pro)"
 
 dkms-remove: check-version
 	@dkms remove -m $(NAME) -v $(VERSION) --all 2>/dev/null || true

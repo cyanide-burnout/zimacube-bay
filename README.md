@@ -1,7 +1,7 @@
-# zimacube-bay-fan
+# zimacube-bay
 
-Linux hwmon driver for the ZimaCube Pro drive-bay controller. Its hwmon name is
-`zimacube_bay`; the kernel module remains `zimacube_bay_fan`. It exposes fan
+Linux hwmon driver for the ZimaCube Pro drive-bay controller. Both its hwmon
+device and kernel module are named `zimacube_bay`. It exposes fan
 speeds, controller temperature and bay occupancy. Cooling policy stays in
 userspace: a Python daemon can set fan duty through the standard hwmon `pwm1`
 attribute. An optional command interface allows an administrator to request
@@ -92,31 +92,35 @@ On a supported ZimaCube Pro with matching kernel headers and DKMS installed:
 
 ```sh
 sudo make dkms
-sudo modprobe zimacube_bay_fan
+sudo modprobe zimacube_bay
 ```
 
 The module binds only on matching hardware. It may also load automatically
-through its device alias. Coordinate with any existing fan-control daemon
-before loading it: the daemon must write hwmon `pwm1`, rather than accessing
-the controller directly. When upgrading from version `0.1`, install the
-companion Python daemon with `zimacube_bay` hwmon support **before** loading
-this version of the driver. The updated daemon recognizes both hwmon names;
-the older daemon recognizes only `zimacube_bay_fan` and will lose the hwmon
-device after this rename. The driver's 80% fallback protects cooling during
-the transition, but the old daemon will not resume control by itself.
-
-The hwmon name also changes the chip heading in `sensors` to
-`zimacube_bay-i2c-0-69`. Update any `/etc/sensors.d/` rules, exporters or
-dashboards that match the old `zimacube_bay_fan` hwmon name.
+through its device alias. The Python daemon must write hwmon `pwm1`, rather
+than access the controller directly. The hwmon name remains `zimacube_bay`,
+so `sensors` still displays `zimacube_bay-i2c-0-69`.
 
 For a read-only inspection, load with
-`sudo modprobe zimacube_bay_fan enable_fan_control=0 enable_disk_power=0`.
+`sudo modprobe zimacube_bay enable_fan_control=0 enable_disk_power=0`.
 This leaves fan duty untouched and exposes no slot power command.
 
-`make dkms` installs or updates version `0.2` from `dkms.conf`. `make install`
-performs a plain module install without DKMS. If version `0.1` is already
-registered, remove it with `sudo dkms remove -m zimacube-bay-fan -v 0.1 --all`
-after installing `0.2`, or use `make dkms-purge` before installing `0.2`.
+`make dkms` installs or updates version `0.3` from `dkms.conf`. `make install`
+performs a plain module install without DKMS. `make dkms-purge` removes all
+versions of the current `zimacube-bay` package.
+
+### Upgrading from `zimacube-bay-fan`
+
+The old and new module names are different. The old module must be unloaded
+before loading `zimacube_bay`, or it may keep the controller at the same bus
+address. Stop `zimacube-fan.service`; the old driver returns the fans to its
+80% fallback when removed. Install the new `zimacube-bay` DKMS package and
+load `zimacube_bay` with `enable_disk_power=0`. Update the Python daemon and
+its service unit from [ZimaCubeFan](https://github.com/cyanide-burnout/ZimaCubeFan)
+before starting that service again: its `ExecStartPre` must load the new module.
+Remove old `zimacube-bay-fan` DKMS registrations before rebooting. List them
+with `sudo dkms status -m zimacube-bay-fan` and remove each version with
+`sudo dkms remove -m zimacube-bay-fan -v VERSION --all`. The hwmon name and
+fan policy are unchanged; this is a module and package rename.
 
 ## Current status
 
@@ -141,6 +145,10 @@ temperature were observed. The updated Python daemon found the renamed hwmon
 device and resumed manual fan control at 60% (`pwm1=153`, `pwm1_enable=1`).
 Slot power remained disabled: `enable_disk_power=N` and `slot_power` was absent.
 No slot power command has been sent or tested on hardware.
+
+Version `0.3` changes module and package naming. It has not yet been loaded on
+the Cube. The optional slot power command remains disabled by default and
+has not been exercised.
 
 ## License
 

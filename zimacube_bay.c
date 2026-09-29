@@ -8,7 +8,7 @@
  * anything else that speaks hwmon. By default it establishes an 80% fallback
  * duty; userspace then takes control through pwm1.
  *
- * Deliberate split of responsibilities, mirroring zimacube-ec-fan:
+ * Deliberate split of responsibilities, mirroring zimacube-ec:
  *
  *   this driver   transport only - expose readings, apply a default duty
  *                 and accept manual fan commands
@@ -36,8 +36,7 @@
 #include <linux/string.h>
 #include <linux/workqueue.h>
 
-#define DRVNAME "zimacube_bay_fan"
-#define HWMON_NAME "zimacube_bay"
+#define DRVNAME "zimacube_bay"
 
 /* Readings are cached for this long so that a `sensors` run, which reads every
  * attribute in a row, costs one bus transaction per quantity instead of one
@@ -898,7 +897,7 @@ static int bay_probe(struct i2c_client *client)
     state->failsafe_active = true;
   }
 
-  state->hwmon = devm_hwmon_device_register_with_info(dev, HWMON_NAME, state,
+  state->hwmon = devm_hwmon_device_register_with_info(dev, DRVNAME, state,
                                                       &bay_chip_info,
                                                       bay_groups);
   if (IS_ERR(state->hwmon))
