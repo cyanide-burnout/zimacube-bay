@@ -128,15 +128,19 @@ for over six minutes without a watchdog fallback.
 
 Before the delayed tachometer retry, the second fan reported zero in two of
 24 readings at 80% duty. With the retry, there were no zero readings in 60
-samples at the same duty. The current build, which also retains the first
+samples at the same duty. The 0.1 build, which also retains the first
 valid sample if the retry fails, was loaded on the Cube. After restarting the
 Python service at its 40% idle duty, both fans reported about 1,800 RPM.
 These observations do not distinguish a transient tachometer reading from a
 brief physical stall. Stop any daemon that accesses the controller directly
 while this module owns it.
 
-The `zimacube_bay` hwmon name and the optional slot power interface are new
-in version `0.2`. They have not been built or exercised on the Cube yet.
+Version `0.2` was built through DKMS and loaded on the same Cube. Its
+`zimacube_bay` hwmon name, initial 80% fallback, two fan inputs and controller
+temperature were observed. The updated Python daemon found the renamed hwmon
+device and resumed manual fan control at 60% (`pwm1=153`, `pwm1_enable=1`).
+Slot power remained disabled: `enable_disk_power=N` and `slot_power` was absent.
+No slot power command has been sent or tested on hardware.
 
 ## License
 
