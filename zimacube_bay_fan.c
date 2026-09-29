@@ -16,9 +16,10 @@
  *                 temperatures and spin state, which this driver does not read
  *
  * Fan reads, writes and watchdog fallback were checked on a ZimaCube Pro.
- * The driver does not control disk power.
+ * Explicit slot power commands are opt-in and have not been hardware-tested.
  */
 
+#include <linux/capability.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/dmi.h>
@@ -36,6 +37,7 @@
 #include <linux/workqueue.h>
 
 #define DRVNAME "zimacube_bay_fan"
+#define HWMON_NAME "zimacube_bay"
 
 /* Readings are cached for this long so that a `sensors` run, which reads every
  * attribute in a row, costs one bus transaction per quantity instead of one
@@ -51,6 +53,8 @@
 #define BAY_WATCHDOG_MAX_SECS 3600
 #define BAY_READ_SIZE 8
 #define BAY_INQUIRY_SIZE 16
+#define BAY_POWER_SIZE 16
+#define BAY_POWER_SLOT_COUNT 7
 #define BAY_VALID_OFFSET 6
 #define BAY_INQUIRY_VALID_OFFSET 14
 #define BAY_IDENTIFY_ATTEMPTS 3
@@ -61,6 +65,7 @@
 #define BAY_CMD_FAN_RPM 0x02
 #define BAY_CMD_BOARD_TEMP 0x03
 #define BAY_CMD_SET_FAN 0x04
+#define BAY_CMD_SET_POWER 0x05
 #define BAY_CMD_INQUIRY 0x00
 #define BAY_I2C_ADDRESS 0x69
 
@@ -82,7 +87,13 @@ MODULE_PARM_DESC(expected_device_id, "Expected INQUIRY device ID (default 0x1001
 static bool enable_fan_control = true;
 module_param(enable_fan_control, bool, 0444);
 MODULE_PARM_DESC(enable_fan_control,
-                 "Expose pwm1 and permit fan writes (default true; false: read-only)");
+                 "Expose pwm1 and permit fan writes (default true; false: no fan writes)");
+
+/* The physical slot mapping and electrical effect have not been verified. */
+static bool enable_disk_power;
+module_param(enable_disk_power, bool, 0444);
+MODULE_PARM_DESC(enable_disk_power,
+                 "Allow explicit slot power commands (default false; untested on hardware)");
 
 /*
  * When fan control is enabled, probe first applies safe_percent. The watchdog
@@ -219,6 +230,20 @@ static int bay_write_fan(struct i2c_client *client, u8 percent)
   data[1] = percent;
   data[6] = 1;
   return i2c_smbus_write_i2c_block_data(client, BAY_CMD_SET_FAN,
+                                         sizeof(data), data);
+}
+
+static int bay_write_slot_power(struct i2c_client *client, unsigned int slot,
+                                bool on)
+{
+  u8 data[BAY_POWER_SIZE] = { 0 };
+
+  if (slot >= BAY_POWER_SLOT_COUNT)
+    return -EINVAL;
+  data[2 * slot] = 1;
+  data[2 * slot + 1] = on ? 1 : 0;
+  data[14] = 1;
+  return i2c_smbus_write_i2c_block_data(client, BAY_CMD_SET_POWER,
                                          sizeof(data), data);
 }
 
@@ -602,7 +627,7 @@ static const struct hwmon_chip_info bay_chip_info = {
   .info = bay_info,
 };
 
-/* ------------------------------------------------- bay presence, outside hwmon
+/* --------------------------------------- bay attributes, outside hwmon ABI
  *
  * hwmon has no sensor type for "is there a disk in bay 3", so these live as
  * plain device attributes next to the hwmon node rather than being bent into
@@ -681,11 +706,46 @@ static ssize_t bay_status_byte2_raw_show(struct device *dev,
   return result;
 }
 
+/* A command, never a reported power state: the controller provides no known
+ * readback for this operation. Only an explicitly opted-in administrator may
+ * write it. No fan or disk polling path calls this function. */
+static ssize_t bay_slot_power_store(struct device *dev,
+                                     struct device_attribute *attr,
+                                     const char *buf, size_t count)
+{
+  struct bay_data *state = dev_get_drvdata(dev);
+  char action[4], extra;
+  unsigned int slot;
+  bool on;
+  int result;
+
+  if (!enable_disk_power)
+    return -EOPNOTSUPP;
+  if (!capable(CAP_SYS_ADMIN))
+    return -EPERM;
+  if (sscanf(buf, "%u %3s %c", &slot, action, &extra) != 2)
+    return -EINVAL;
+  if (slot >= BAY_POWER_SLOT_COUNT)
+    return -EINVAL;
+  if (!strcmp(action, "on"))
+    on = true;
+  else if (!strcmp(action, "off"))
+    on = false;
+  else
+    return -EINVAL;
+
+  mutex_lock(&state->lock);
+  result = bay_write_slot_power(state->client, slot, on);
+  mutex_unlock(&state->lock);
+  return result ? result : count;
+}
+
 static DEVICE_ATTR(hdd_slots, 0444, bay_hdd_slots_show, NULL);
 static DEVICE_ATTR(hdd_present, 0444, bay_hdd_present_show, NULL);
 static DEVICE_ATTR(nvme_present, 0444, bay_nvme_present_show, NULL);
 static DEVICE_ATTR(positions_reported, 0444, bay_positions_reported_show, NULL);
 static DEVICE_ATTR(status_byte2_raw, 0444, bay_status_byte2_raw_show, NULL);
+static DEVICE_ATTR(slot_power, 0200, NULL, bay_slot_power_store);
 
 static struct attribute *bay_attrs[] = {
   &dev_attr_hdd_slots.attr,
@@ -693,9 +753,27 @@ static struct attribute *bay_attrs[] = {
   &dev_attr_nvme_present.attr,
   &dev_attr_positions_reported.attr,
   &dev_attr_status_byte2_raw.attr,
+  &dev_attr_slot_power.attr,
   NULL
 };
-ATTRIBUTE_GROUPS(bay);
+
+static umode_t bay_attr_is_visible(struct kobject *kobj,
+                                   struct attribute *attr, int index)
+{
+  if ((attr == &dev_attr_slot_power.attr) && (!enable_disk_power))
+    return 0;
+  return attr->mode;
+}
+
+static const struct attribute_group bay_group = {
+  .attrs = bay_attrs,
+  .is_visible = bay_attr_is_visible,
+};
+
+static const struct attribute_group *bay_groups[] = {
+  &bay_group,
+  NULL
+};
 
 /* Registered before hwmon, so devres removes hwmon and drains its sysfs
  * operations before this action sends the final fan command. */
@@ -763,7 +841,7 @@ static int bay_probe(struct i2c_client *client)
   if (!i2c_check_functionality(client->adapter,
                                I2C_FUNC_SMBUS_READ_I2C_BLOCK))
     return -ENODEV;
-  if (enable_fan_control &&
+  if ((enable_fan_control || enable_disk_power) &&
       (!i2c_check_functionality(client->adapter,
                                 I2C_FUNC_SMBUS_WRITE_I2C_BLOCK)))
     return -ENODEV;
@@ -820,7 +898,7 @@ static int bay_probe(struct i2c_client *client)
     state->failsafe_active = true;
   }
 
-  state->hwmon = devm_hwmon_device_register_with_info(dev, DRVNAME, state,
+  state->hwmon = devm_hwmon_device_register_with_info(dev, HWMON_NAME, state,
                                                       &bay_chip_info,
                                                       bay_groups);
   if (IS_ERR(state->hwmon))
@@ -830,8 +908,10 @@ static int bay_probe(struct i2c_client *client)
   if (enable_fan_control)
     schedule_delayed_work(&state->watchdog_work, HZ);
 
-  dev_info(dev, "backplane controller at 0x%02x, %u fan(s), %s\n", client->addr,
-           fan_count, enable_fan_control ? "fan control enabled" : "read-only");
+  dev_info(dev, "backplane controller at 0x%02x, %u fan(s), fan control %s, slot power %s\n",
+           client->addr, fan_count,
+           enable_fan_control ? "enabled" : "disabled",
+           enable_disk_power ? "enabled" : "disabled");
   return 0;
 }
 

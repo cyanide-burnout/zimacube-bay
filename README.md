@@ -1,13 +1,15 @@
 # zimacube-bay-fan
 
-Linux hwmon driver for the ZimaCube Pro drive-bay fan controller. It exposes
-fan speeds, controller temperature and bay occupancy. Cooling policy stays in
+Linux hwmon driver for the ZimaCube Pro drive-bay controller. Its hwmon name is
+`zimacube_bay`; the kernel module remains `zimacube_bay_fan`. It exposes fan
+speeds, controller temperature and bay occupancy. Cooling policy stays in
 userspace: a Python daemon can set fan duty through the standard hwmon `pwm1`
-attribute.
+attribute. An optional command interface allows an administrator to request
+power on or off for one slot.
 
 By default, the driver applies 80% fan duty when it binds. If userspace stops
-updating the duty, a watchdog returns it to 80% after 60 seconds. The driver
-does not control disk power.
+updating the duty, a watchdog returns it to 80% after 60 seconds. Slot power
+control is disabled by default and is never part of the cooling loop.
 
 ## Attributes
 
@@ -21,6 +23,7 @@ does not control disk power.
 | `hdd_present` | Occupancy bitmask; bit *N* corresponds to bay *N*. |
 | `nvme_present` | Whether an NVMe device is present. |
 | `positions_reported`, `status_byte2_raw` | Additional raw status values for diagnostics. |
+| `slot_power` | Optional, write-only slot power command; appears only with `enable_disk_power=1`. |
 
 If a fan tachometer read is zero, the driver waits 150 ms and reads both
 tachometers once more. A repeated zero remains visible to userspace. If the
@@ -28,6 +31,30 @@ second read fails, the first valid sample is retained.
 
 The bay status attributes are ordinary device attributes because hwmon has no
 standard sensor type for bay occupancy.
+
+### Slot power commands
+
+The `slot_power` attribute is hidden unless the module is loaded with
+`enable_disk_power=1`. It accepts only a slot index from `0` through `6`
+followed by `on` or `off`, for example `0 on`. Writing requires root and
+`CAP_SYS_ADMIN`. The command is sent only on an explicit write to this
+attribute; the driver never changes slot power during probe, polling,
+watchdog fallback, suspend/resume or removal.
+
+The physical mapping of these indices to bays and the electrical effect of
+the command have **not** been verified on hardware. A successful write means
+only that the bus transfer completed; there is no confirmed power-state
+readback. `hdd_present` reports occupancy, not whether a slot is powered.
+The companion fan daemon never writes `slot_power`.
+
+An `off` command can make a drive disappear immediately, including while it
+is mounted or handling I/O. The kernel driver does not unmount filesystems,
+flush applications or detach block devices for you. Before intentionally
+turning off a slot, identify its physical disk, stop I/O, unmount its
+filesystems and detach the block device (for a SCSI disk, by writing `1` to
+`/sys/block/sdX/device/delete`). After turning it back on, the host needs a
+rescan to discover the disk again. Do not use this procedure until the slot
+index has been validated on non-production hardware.
 
 Writing `pwm1` switches to manual control. Values that map below
 `minimum_percent` (default 30%) are rejected. The minimum is a software limit,
@@ -52,7 +79,8 @@ must write `pwm1` again to resume manual control.
 | `safe_percent` | `80` | Startup and fallback duty. |
 | `minimum_percent` | `30` | Lowest allowed manual duty. |
 | `watchdog_secs` | `60` | Manual-control timeout; `0` disables the watchdog. |
-| `enable_fan_control` | `1` | Set to `0` for read-only operation: no fan commands, `pwm1` or watchdog. |
+| `enable_fan_control` | `1` | Set to `0` to disable fan commands, `pwm1` and watchdog. This does not disable explicitly enabled slot power commands. |
+| `enable_disk_power` | `0` | Explicitly enable the untested `slot_power` command; independent of fan control. |
 
 The driver requires `1 <= minimum_percent <= safe_percent <= 100` and limits
 `watchdog_secs` to 3600. The remaining module parameters are intended for
@@ -70,16 +98,25 @@ sudo modprobe zimacube_bay_fan
 The module binds only on matching hardware. It may also load automatically
 through its device alias. Coordinate with any existing fan-control daemon
 before loading it: the daemon must write hwmon `pwm1`, rather than accessing
-the controller directly. Upgrade the companion Python daemon to its hwmon
-version before running it alongside this module.
+the controller directly. When upgrading from version `0.1`, install the
+companion Python daemon with `zimacube_bay` hwmon support **before** loading
+this version of the driver. The updated daemon recognizes both hwmon names;
+the older daemon recognizes only `zimacube_bay_fan` and will lose the hwmon
+device after this rename. The driver's 80% fallback protects cooling during
+the transition, but the old daemon will not resume control by itself.
 
-For a first read-only inspection, load with
-`sudo modprobe zimacube_bay_fan enable_fan_control=0`. This leaves fan duty
-untouched.
+The hwmon name also changes the chip heading in `sensors` to
+`zimacube_bay-i2c-0-69`. Update any `/etc/sensors.d/` rules, exporters or
+dashboards that match the old `zimacube_bay_fan` hwmon name.
 
-`make dkms` installs or updates the version in `dkms.conf`. `make install`
-performs a plain module install without DKMS. `make dkms-purge` removes all
-registered versions of this module before a version change.
+For a read-only inspection, load with
+`sudo modprobe zimacube_bay_fan enable_fan_control=0 enable_disk_power=0`.
+This leaves fan duty untouched and exposes no slot power command.
+
+`make dkms` installs or updates version `0.2` from `dkms.conf`. `make install`
+performs a plain module install without DKMS. If version `0.1` is already
+registered, remove it with `sudo dkms remove -m zimacube-bay-fan -v 0.1 --all`
+after installing `0.2`, or use `make dkms-purge` before installing `0.2`.
 
 ## Current status
 
@@ -92,11 +129,14 @@ for over six minutes without a watchdog fallback.
 Before the delayed tachometer retry, the second fan reported zero in two of
 24 readings at 80% duty. With the retry, there were no zero readings in 60
 samples at the same duty. The current build, which also retains the first
-valid sample if the retry fails, is loaded on the Cube. After restarting the
+valid sample if the retry fails, was loaded on the Cube. After restarting the
 Python service at its 40% idle duty, both fans reported about 1,800 RPM.
 These observations do not distinguish a transient tachometer reading from a
 brief physical stall. Stop any daemon that accesses the controller directly
 while this module owns it.
+
+The `zimacube_bay` hwmon name and the optional slot power interface are new
+in version `0.2`. They have not been built or exercised on the Cube yet.
 
 ## License
 
