@@ -19,7 +19,6 @@
  * Explicit slot power commands are opt-in and have not been hardware-tested.
  */
 
-#include <linux/capability.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -731,8 +730,9 @@ static int bay_status_byte2_raw_show(struct seq_file *file, void *unused)
 DEFINE_SHOW_ATTRIBUTE(bay_status_byte2_raw);
 
 /* A command, never a reported power state: the controller provides no known
- * readback for this operation. Only an explicitly opted-in administrator may
- * write it. No fan or disk polling path calls this function. */
+ * readback for this operation. Access is the file mode (0200, root only), as
+ * for the SCSI "delete" and PCI "remove" attributes, plus the enable_disk_power
+ * opt-in. No fan or disk polling path calls this function. */
 static ssize_t bay_slot_power_store(struct device *dev,
                                      struct device_attribute *attr,
                                      const char *buf, size_t count)
@@ -745,8 +745,6 @@ static ssize_t bay_slot_power_store(struct device *dev,
 
   if (!enable_disk_power)
     return -EOPNOTSUPP;
-  if (!capable(CAP_SYS_ADMIN))
-    return -EPERM;
   if (sscanf(buf, "%u %3s %c", &slot, action, &extra) != 2)
     return -EINVAL;
   if (slot >= BAY_POWER_SLOT_COUNT)

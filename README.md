@@ -60,8 +60,8 @@ second read fails, the first valid sample is retained.
 
 The `slot_power` attribute is hidden unless the module is loaded with
 `enable_disk_power=1`. It accepts only a slot index from `0` through `6`
-followed by `on` or `off`, for example `0 on`. Writing requires root and
-`CAP_SYS_ADMIN`. The command is sent only on an explicit write to this
+followed by `on` or `off`, for example `0 on`. The file is writable by root
+only (mode `0200`). The command is sent only on an explicit write to this
 attribute; the driver never changes slot power during probe, polling,
 watchdog fallback, suspend/resume or removal.
 
@@ -128,12 +128,12 @@ For a read-only inspection, load with
 `sudo modprobe zimacube_bay enable_fan_control=0 enable_disk_power=0`.
 This leaves fan duty untouched and exposes no slot power command.
 
-`make dkms` installs or updates version `0.5` from `dkms.conf`. `make install`
+`make dkms` installs or updates version `0.6` from `dkms.conf`. `make install`
 performs a plain module install without DKMS. `make dkms-purge` removes all
 versions of the current `zimacube-bay` package.
 
 When upgrading from an earlier `zimacube-bay` version, DKMS can build and
-install `0.5` while the old build stays loaded. Stop the Python service and
+install `0.6` while the old build stays loaded. Stop the Python service and
 reload `zimacube_bay` to activate it, then restart the service. Remove the old
 DKMS registration with `sudo dkms remove -m zimacube-bay -v VERSION --all`
 before rebooting.
@@ -194,6 +194,10 @@ client device, `slot_power` was absent with slot power disabled, the hwmon
 device carried only fan, temperature and PWM attributes, and debugfs reported
 `7` and `0x4f`. `sensors` showed the `Bay Fan 1`, `Bay Fan 2` and `Backplane`
 labels, and the Python service kept manual control.
+
+Version `0.6` drops the `CAP_SYS_ADMIN` check on `slot_power`; access is the
+root-only file mode, as for comparable kernel attributes. Nothing else
+changes. It has not been loaded on the Cube yet.
 
 ## License
 
