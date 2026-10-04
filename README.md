@@ -65,6 +65,21 @@ only (mode `0200`). The command is sent only on an explicit write to this
 attribute; the driver never changes slot power during probe, polling,
 watchdog fallback, suspend/resume or removal.
 
+Access is the file mode alone, so a non-root service, such as a management
+UI, can be allowed to write it with a udev rule instead of extra
+capabilities. The attribute is created when the driver binds, after the
+client's `add` event, so the rule has to match `bind`:
+
+```text
+# /etc/udev/rules.d/90-zimacube-bay.rules
+ACTION=="bind", SUBSYSTEM=="i2c", DRIVER=="zimacube_bay", TEST=="slot_power", \
+  RUN+="/bin/chgrp bayadmin /sys%p/slot_power", RUN+="/bin/chmod 0220 /sys%p/slot_power"
+```
+
+`TEST=="slot_power"` skips the rule when the module is loaded without
+`enable_disk_power=1` and the attribute does not exist. `bayadmin` stands for
+whatever group the service runs as.
+
 The physical mapping of these indices to bays and the electrical effect of
 the command have **not** been verified on hardware. A successful write means
 only that the bus transfer completed; there is no confirmed power-state
