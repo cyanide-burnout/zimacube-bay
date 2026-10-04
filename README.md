@@ -13,7 +13,10 @@ control is disabled by default and is never part of the cooling loop.
 
 ## Attributes
 
-| Attribute | Meaning |
+Sensors and fan control are standard hwmon attributes of the `zimacube_bay`
+hwmon device:
+
+| hwmon attribute | Meaning |
 |---|---|
 | `fan1_input`, `fan2_input` | Bay fan speeds in RPM. The second fan is exposed when `fan_count=2` (the default). |
 | `fan1_label`, `fan2_label` | `Bay Fan 1`, `Bay Fan 2`; the second label follows `fan_count`. |
@@ -21,18 +24,37 @@ control is disabled by default and is never part of the cooling loop.
 | `temp1_label` | `Backplane`. |
 | `pwm1` | Last applied fan duty on the hwmon scale of 0–255. The default 80% is reported as 204. |
 | `pwm1_enable` | `0` when the driver holds its fallback duty; `1` after userspace sets a manual duty. |
+
+Bay occupancy and slot power are not sensors, so they are attributes of the
+I2C client device, the parent of the hwmon device:
+
+| Device attribute | Meaning |
+|---|---|
 | `hdd_slots` | Number of HDD positions considered, capped at six. |
 | `hdd_present` | Occupancy bitmask; bit *N* corresponds to bay *N*. |
 | `nvme_present` | Whether an NVMe device is present. |
-| `positions_reported`, `status_byte2_raw` | Additional raw status values for diagnostics. |
 | `slot_power` | Optional, write-only slot power command; appears only with `enable_disk_power=1`. |
+
+Two raw status values whose meaning is not established are diagnostics rather
+than ABI, so they are in debugfs (root only, debugfs must be mounted):
+`positions_reported` and `status_byte2_raw`.
+
+With the controller at `0-0069` on the i801 bus the layout is:
+
+```text
+/sys/bus/i2c/devices/0-0069/            hdd_slots hdd_present nvme_present [slot_power]
+/sys/bus/i2c/devices/0-0069/hwmon/hwmonN/  fan*, temp1*, pwm1, pwm1_enable
+/sys/kernel/debug/zimacube_bay/0-0069/  positions_reported status_byte2_raw
+```
+
+Neither the bus number nor the hwmon number is stable, so find the files by
+name instead: either `/sys/bus/i2c/drivers/zimacube_bay/*/hdd_present`, or
+the hwmon device whose `name` is `zimacube_bay` followed by
+`hwmonN/device/hdd_present`.
 
 If a fan tachometer read is zero, the driver waits 150 ms and reads both
 tachometers once more. A repeated zero remains visible to userspace. If the
 second read fails, the first valid sample is retained.
-
-The bay status attributes are ordinary device attributes because hwmon has no
-standard sensor type for bay occupancy.
 
 ### Slot power commands
 
@@ -106,14 +128,21 @@ For a read-only inspection, load with
 `sudo modprobe zimacube_bay enable_fan_control=0 enable_disk_power=0`.
 This leaves fan duty untouched and exposes no slot power command.
 
-`make dkms` installs or updates version `0.4` from `dkms.conf`. `make install`
+`make dkms` installs or updates version `0.5` from `dkms.conf`. `make install`
 performs a plain module install without DKMS. `make dkms-purge` removes all
 versions of the current `zimacube-bay` package.
 
-When upgrading from `0.3`, DKMS can build and install `0.4` while `0.3` stays
-loaded. Stop the Python service and reload `zimacube_bay` to activate the new
-labels, then restart the service. Remove the old DKMS registration with
-`sudo dkms remove -m zimacube-bay -v 0.3 --all` before rebooting.
+When upgrading from an earlier `zimacube-bay` version, DKMS can build and
+install `0.5` while the old build stays loaded. Stop the Python service and
+reload `zimacube_bay` to activate it, then restart the service. Remove the old
+DKMS registration with `sudo dkms remove -m zimacube-bay -v VERSION --all`
+before rebooting.
+
+Version `0.5` moves the bay attributes. `hdd_slots`, `hdd_present`,
+`nvme_present` and `slot_power` were in `hwmonN/` and are now in
+`hwmonN/device/`; `positions_reported` and `status_byte2_raw` left sysfs for
+debugfs. Fan, temperature and PWM attributes are unchanged, and the Python fan
+daemon uses none of the moved files.
 
 ### Upgrading from `zimacube-bay-fan`
 
@@ -157,7 +186,14 @@ Version `0.3` changed module and package naming and is running on the Cube
 with the updated Python daemon. Both fans report RPM and the disk-power
 interface remains disabled. No slot power command has been sent or tested.
 
-Version `0.4` adds only hwmon labels. It has not yet been loaded on the Cube.
+Version `0.4` adds hwmon labels. Version `0.5` moves the bay attributes to
+the I2C client device and the raw status values to debugfs. It was built
+through DKMS and loaded on the Cube running `6.12.111+deb13-amd64`:
+`hdd_slots`, `hdd_present` and `nvme_present` read `6`, `0xf` and `1` from the
+client device, `slot_power` was absent with slot power disabled, the hwmon
+device carried only fan, temperature and PWM attributes, and debugfs reported
+`7` and `0x4f`. `sensors` showed the `Bay Fan 1`, `Bay Fan 2` and `Backplane`
+labels, and the Python service kept manual control.
 
 ## License
 

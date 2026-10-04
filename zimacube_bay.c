@@ -20,6 +20,7 @@
  */
 
 #include <linux/capability.h>
+#include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/dmi.h>
@@ -31,6 +32,7 @@
 #include <linux/mutex.h>
 #include <linux/notifier.h>
 #include <linux/pm.h>
+#include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/sysfs.h>
 #include <linux/string.h>
@@ -652,9 +654,10 @@ static const struct hwmon_chip_info bay_chip_info = {
 
 /* --------------------------------------- bay attributes, outside hwmon ABI
  *
- * hwmon has no sensor type for "is there a disk in bay 3", so these live as
- * plain device attributes next to the hwmon node rather than being bent into
- * an ABI that does not fit them.
+ * Bay occupancy and slot power are not sensors, so they are attributes of the
+ * I2C client device, the hwmon node's parent (hwmonN/device/), rather than
+ * extra attributes on the hwmon device. Raw status bytes whose meaning is not
+ * established are diagnostics, not ABI, and live in debugfs instead.
  */
 
 static ssize_t bay_hdd_slots_show(struct device *dev,
@@ -699,35 +702,33 @@ static ssize_t bay_nvme_present_show(struct device *dev,
   return result;
 }
 
-static ssize_t bay_positions_reported_show(struct device *dev,
-                                            struct device_attribute *attr,
-                                            char *buf)
+static int bay_positions_reported_show(struct seq_file *file, void *unused)
 {
-  struct bay_data *state = dev_get_drvdata(dev);
+  struct bay_data *state = file->private;
   int result;
 
   mutex_lock(&state->lock);
   result = bay_refresh_disk_locked(state);
   if (!result)
-    result = sysfs_emit(buf, "%u\n", state->positions_reported);
+    seq_printf(file, "%u\n", state->positions_reported);
   mutex_unlock(&state->lock);
   return result;
 }
+DEFINE_SHOW_ATTRIBUTE(bay_positions_reported);
 
-static ssize_t bay_status_byte2_raw_show(struct device *dev,
-                                          struct device_attribute *attr,
-                                          char *buf)
+static int bay_status_byte2_raw_show(struct seq_file *file, void *unused)
 {
-  struct bay_data *state = dev_get_drvdata(dev);
+  struct bay_data *state = file->private;
   int result;
 
   mutex_lock(&state->lock);
   result = bay_refresh_disk_locked(state);
   if (!result)
-    result = sysfs_emit(buf, "0x%02x\n", state->status_byte2_raw);
+    seq_printf(file, "0x%02x\n", state->status_byte2_raw);
   mutex_unlock(&state->lock);
   return result;
 }
+DEFINE_SHOW_ATTRIBUTE(bay_status_byte2_raw);
 
 /* A command, never a reported power state: the controller provides no known
  * readback for this operation. Only an explicitly opted-in administrator may
@@ -766,16 +767,12 @@ static ssize_t bay_slot_power_store(struct device *dev,
 static DEVICE_ATTR(hdd_slots, 0444, bay_hdd_slots_show, NULL);
 static DEVICE_ATTR(hdd_present, 0444, bay_hdd_present_show, NULL);
 static DEVICE_ATTR(nvme_present, 0444, bay_nvme_present_show, NULL);
-static DEVICE_ATTR(positions_reported, 0444, bay_positions_reported_show, NULL);
-static DEVICE_ATTR(status_byte2_raw, 0444, bay_status_byte2_raw_show, NULL);
 static DEVICE_ATTR(slot_power, 0200, NULL, bay_slot_power_store);
 
 static struct attribute *bay_attrs[] = {
   &dev_attr_hdd_slots.attr,
   &dev_attr_hdd_present.attr,
   &dev_attr_nvme_present.attr,
-  &dev_attr_positions_reported.attr,
-  &dev_attr_status_byte2_raw.attr,
   &dev_attr_slot_power.attr,
   NULL
 };
@@ -797,6 +794,29 @@ static const struct attribute_group *bay_groups[] = {
   &bay_group,
   NULL
 };
+
+/* /sys/kernel/debug/zimacube_bay; an error pointer when debugfs is absent,
+ * which every debugfs call below accepts. */
+static struct dentry *bay_debugfs_root;
+
+static void bay_debugfs_remove(void *data)
+{
+  debugfs_remove_recursive(data);
+}
+
+/* Diagnostics are optional: a failure here never fails probe. */
+static void bay_debugfs_init(struct device *dev, struct bay_data *state)
+{
+  struct dentry *dir;
+
+  dir = debugfs_create_dir(dev_name(dev), bay_debugfs_root);
+  debugfs_create_file("positions_reported", 0444, dir, state,
+                      &bay_positions_reported_fops);
+  debugfs_create_file("status_byte2_raw", 0444, dir, state,
+                      &bay_status_byte2_raw_fops);
+  if (devm_add_action_or_reset(dev, bay_debugfs_remove, dir))
+    dev_warn(dev, "debugfs diagnostics unavailable\n");
+}
 
 /* Registered before hwmon, so devres removes hwmon and drains its sysfs
  * operations before this action sends the final fan command. */
@@ -922,11 +942,12 @@ static int bay_probe(struct i2c_client *client)
   }
 
   state->hwmon = devm_hwmon_device_register_with_info(dev, DRVNAME, state,
-                                                      &bay_chip_info,
-                                                      bay_groups);
+                                                      &bay_chip_info, NULL);
   if (IS_ERR(state->hwmon))
     return PTR_ERR(state->hwmon);
   state->hwmon_registered = true;
+
+  bay_debugfs_init(dev, state);
 
   if (enable_fan_control)
     schedule_delayed_work(&state->watchdog_work, HZ);
@@ -963,6 +984,8 @@ static struct i2c_driver bay_driver = {
     .name = DRVNAME,
     .pm = pm_sleep_ptr(&bay_pm_ops),
     .probe_type = PROBE_FORCE_SYNCHRONOUS,
+    /* added by the driver core after probe succeeds, removed before remove() */
+    .dev_groups = bay_groups,
   },
   .probe = bay_probe,
   .remove = bay_remove,
@@ -1130,14 +1153,21 @@ static int __init bay_init(void)
   if (!dmi_check_system(bay_dmi_table))
     return -ENODEV;
 
+  /* Before the driver, since a probe may use it as soon as it registers. */
+  bay_debugfs_root = debugfs_create_dir(DRVNAME, NULL);
+
   result = i2c_add_driver(&bay_driver);
   if (result)
+  {
+    debugfs_remove_recursive(bay_debugfs_root);
     return result;
+  }
 
   result = bus_register_notifier(&i2c_bus_type, &bay_remove_notifier);
   if (result)
   {
     i2c_del_driver(&bay_driver);
+    debugfs_remove_recursive(bay_debugfs_root);
     return result;
   }
   result = bus_register_notifier(&i2c_bus_type, &bay_add_notifier);
@@ -1145,6 +1175,7 @@ static int __init bay_init(void)
   {
     bus_unregister_notifier(&i2c_bus_type, &bay_remove_notifier);
     i2c_del_driver(&bay_driver);
+    debugfs_remove_recursive(bay_debugfs_root);
     return result;
   }
 
@@ -1192,6 +1223,7 @@ static void __exit bay_exit(void)
 
   bus_unregister_notifier(&i2c_bus_type, &bay_remove_notifier);
   i2c_del_driver(&bay_driver);
+  debugfs_remove_recursive(bay_debugfs_root);
 }
 
 module_init(bay_init);
