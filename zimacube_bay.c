@@ -848,7 +848,7 @@ static int bay_resume(struct device *dev)
   state->fan_valid = false;
   state->temp_valid = false;
   state->disk_valid = false;
-  if (enable_fan_control && (state->hwmon_registered))
+  if ((enable_fan_control) && (state->hwmon_registered))
   {
     result = bay_write_fan(state->client, safe_percent);
     if (!result)
@@ -882,7 +882,7 @@ static int bay_probe(struct i2c_client *client)
   if (!i2c_check_functionality(client->adapter,
                                I2C_FUNC_SMBUS_READ_I2C_BLOCK))
     return -ENODEV;
-  if ((enable_fan_control || enable_disk_power) &&
+  if (((enable_fan_control) || (enable_disk_power)) &&
       (!i2c_check_functionality(client->adapter,
                                 I2C_FUNC_SMBUS_WRITE_I2C_BLOCK)))
     return -ENODEV;
@@ -1023,7 +1023,7 @@ static void bay_attach_adapter(struct i2c_adapter *adapter)
   /* Called with the PCI parent lock held, after looking up the adapter a
    * second time. Never transact from the I2C ADD notifier itself. */
   mutex_lock(&bay_bind_lock);
-  if (bay_stopping || bay_owned_client ||
+  if ((bay_stopping) || (bay_owned_client) ||
       (!device_is_registered(&adapter->dev)))
   {
     mutex_unlock(&bay_bind_lock);
@@ -1071,9 +1071,9 @@ static int bay_match_adapter(struct device *dev, const void *data)
   struct i2c_adapter *adapter = i2c_verify_adapter(dev);
   const struct device *parent = data;
 
-  return adapter && (adapter->dev.parent) &&
+  return (adapter) && (adapter->dev.parent) &&
          ((!parent) || (adapter->dev.parent == parent)) &&
-         strstr(adapter->name, "SMBus I801");
+         (strstr(adapter->name, "SMBus I801"));
 }
 
 static void bay_bind_workfn(struct work_struct *work)
@@ -1112,7 +1112,7 @@ static int bay_add_notifier_call(struct notifier_block *nb,
   if (action == BUS_NOTIFY_ADD_DEVICE)
   {
     adapter = i2c_verify_adapter(dev);
-    if (adapter && strstr(adapter->name, "SMBus I801") &&
+    if ((adapter) && (strstr(adapter->name, "SMBus I801")) &&
         (!READ_ONCE(bay_stopping)))
       schedule_work(&bay_bind_work);
   }
@@ -1129,7 +1129,7 @@ static int bay_remove_notifier_call(struct notifier_block *nb,
   {
     client = i2c_verify_client(dev);
     mutex_lock(&bay_bind_lock);
-    if (client && (client == bay_owned_client))
+    if ((client) && (client == bay_owned_client))
       bay_owned_client = NULL;
     mutex_unlock(&bay_bind_lock);
   }

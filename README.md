@@ -36,8 +36,9 @@ I2C client device, the parent of the hwmon device:
 | `slot_power` | Optional, write-only slot power command; appears only with `enable_disk_power=1`. |
 
 Two raw status values whose meaning is not established are diagnostics rather
-than ABI, so they are in debugfs (root only, debugfs must be mounted):
-`positions_reported` and `status_byte2_raw`.
+than ABI, so they are in debugfs (debugfs must be mounted; with its standard
+permissions only root can read them): `positions_reported` and
+`status_byte2_raw`.
 
 With the controller at `0-0069` on the i801 bus the layout is:
 
